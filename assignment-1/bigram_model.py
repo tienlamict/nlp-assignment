@@ -11,11 +11,19 @@ import os
 import re
 import random
 import math
+import json
+import urllib.request
 from collections import defaultdict, Counter
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 DEFAULT_CORPUS_PATH = os.path.join(os.path.dirname(__file__), "corpus.txt")
+
+HF_API = (
+    "https://datasets-server.huggingface.co/rows"
+    "?dataset=phamson02%2Fvietnamese-poetry-corpus"
+    "&config=default&split=train"
+)
 
 
 def load_corpus(file_path=None):
@@ -23,6 +31,40 @@ def load_corpus(file_path=None):
     path = file_path or DEFAULT_CORPUS_PATH
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def _fetch_hf_page(offset, length=100):
+    """Lấy một trang (tối đa 100 dòng) từ HuggingFace Datasets API."""
+    url = f"{HF_API}&offset={offset}&length={length}"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data["rows"]
+
+
+def load_corpus_from_hf(num_rows=500):
+    """
+    Tải num_rows bài thơ từ HuggingFace (phamson02/vietnamese-poetry-corpus).
+    Trả về chuỗi văn bản, mỗi dòng thơ là một dòng riêng.
+    """
+    print(f"Đang tải {num_rows} bài thơ từ HuggingFace Dataset...")
+    all_lines = []
+    batch = 100
+    fetched = 0
+
+    for offset in range(0, num_rows, batch):
+        length = min(batch, num_rows - offset)
+        rows = _fetch_hf_page(offset, length)
+        for row in rows:
+            content = row["row"]["content"]
+            # Chuẩn hóa dấu phân cách dòng thơ "<\n>" thành newline thực
+            content = re.sub(r"\s*<\s*\\?n\s*>\s*", "\n", content)
+            all_lines.append(content.strip())
+        fetched += len(rows)
+        print(f"  [{fetched}/{num_rows}] bài đã tải", end="\r")
+
+    print()
+    return "\n".join(all_lines)
 
 
 # ============================================================
@@ -171,7 +213,21 @@ def main():
     # --- 1. Tải và tiền xử lý corpus ---
     print("\n[1] TẢI VÀ TIỀN XỬ LÝ CORPUS")
     print("-" * 40)
-    corpus_text = load_corpus()
+
+    use_hf = "--hf" in sys.argv
+    num_rows = 500
+    if "--num-rows" in sys.argv:
+        idx = sys.argv.index("--num-rows")
+        try:
+            num_rows = int(sys.argv[idx + 1])
+        except (IndexError, ValueError):
+            print("Cảnh báo: --num-rows cần kèm số nguyên. Dùng mặc định 500.")
+
+    if use_hf:
+        corpus_text = load_corpus_from_hf(num_rows)
+    else:
+        corpus_text = load_corpus()
+
     sentences = preprocess(corpus_text)
     print(f"Số câu sau tiền xử lý: {len(sentences)}")
 
